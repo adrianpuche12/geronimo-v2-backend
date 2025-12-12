@@ -3,12 +3,12 @@ name: Geronimo V2 CI/CD Pipeline
 on:
   push:
     branches:
-      - main
+      - master
       - develop
       - 'feature/**'
   pull_request:
     branches:
-      - main
+      - master
       - develop
 
 env:
