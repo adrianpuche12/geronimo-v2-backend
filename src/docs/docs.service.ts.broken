@@ -1,0 +1,232 @@
+import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Document } from '../entities/document.entity';
+import { DuplicateDetectionService } from './duplicate-detection.service';
+import { FilesystemService } from './filesystem.service';
+
+@Injectable()
+export class DocsService {
+  constructor(
+    @InjectRepository(Document)
+    private documentRepository: Repository<Document>,
+    private duplicateDetectionService: DuplicateDetectionService,
+    private filesystemService: FilesystemService,
+  ) {}
+
+  async create(createDocDto: {
+    projectId: string;
+    path: string;
+    title?: string;
+    content?: string;
+    metadata?: Record<string, any>;
+    author?: string;
+    skipDuplicateCheck?: boolean;
+  }): Promise<Document> {
+    if (!createDocDto.skipDuplicateCheck && createDocDto.content) {
+      const duplicateCheck = await this.duplicateDetectionService.checkDuplicate(
+        createDocDto.projectId,
+        createDocDto.path,
+        createDocDto.content,
+      );
+
+      if (duplicateCheck.isDuplicate) {
+        throw new ConflictException({
+          message: duplicateCheck.message,
+          duplicateType: duplicateCheck.duplicateType,
+          existingDocument: {
+            id: duplicateCheck.existingDocument?.id,
+            path: duplicateCheck.existingDocument?.path,
+            title: duplicateCheck.existingDocument?.title,
+          },
+        });
+      }
+    }
+
+    let filePath = null;
+    let hash: string | null = null;
+    let fileSize: number | null = null;
+    
+    if (createDocDto.content) {
+      const fileData = await this.filesystemService.saveFile(
+        createDocDto.projectId,
+        createDocDto.content,
+        createDocDto.path
+      );
+      filePath = fileData.filePath;
+      hash = fileData.hash;
+      fileSize = fileData.fileSize;
+    }
+
+    const document = new Document();
+    document.projectId = createDocDto.projectId;
+    document.path = createDocDto.path;
+    document.title = createDocDto.title || null;
+    document.content = createDocDto.content || null;
+    document.metadata = createDocDto.metadata || null;
+    document.author = createDocDto.author || null;
+    document.filePath = filePath;
+    document.hash = hash;
+    document.fileSize = fileSize;
+    document.mimeType = createDocDto.path ? this.filesystemService.getMimeType(createDocDto.path) : null;
+    
+    return this.documentRepository.save(document);
+  }
+
+  async sync(
+    projectId: string,
+    documents: Array<{ path: string; content: string; title?: string }>,
+  ) {
+    const results = {
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      total: documents.length,
+      duplicates: [] as Array<{ path: string; reason: string }>,
+    };
+
+    for (const doc of documents) {
+      const existing = await this.documentRepository.findOne({
+        where: { projectId, path: doc.path },
+      });
+
+      if (existing) {
+        const fileData = await this.filesystemService.saveFile(projectId, doc.content, doc.path);
+        
+        if (existing.filePath) {
+          await this.filesystemService.deleteFile(existing.filePath);
+        }
+
+        await this.documentRepository.update(existing.id, {
+          content: doc.content,
+          title: doc.title || existing.title,
+          filePath: fileData.filePath,
+          hash: fileData.hash,
+          fileSize: fileData.fileSize,
+        });
+        results.updated++;
+      } else {
+        const duplicateCheck = await this.duplicateDetectionService.checkDuplicate(
+          projectId,
+          doc.path,
+          doc.content,
+        );
+
+        if (duplicateCheck.isDuplicate) {
+          results.skipped++;
+          results.duplicates.push({
+            path: doc.path,
+            reason: duplicateCheck.message || 'Duplicado',
+          });
+        } else {
+          const fileData = await this.filesystemService.saveFile(projectId, doc.content, doc.path);
+          
+          const newDoc = this.documentRepository.create({
+            projectId,
+            path: doc.path,
+            content: doc.content,
+            title: doc.title,
+            filePath: fileData.filePath,
+            hash: fileData.hash,
+            fileSize: fileData.fileSize,
+            mimeType: this.filesystemService.getMimeType(doc.path),
+          });
+          await this.documentRepository.save(newDoc);
+          results.created++;
+        }
+      }
+    }
+
+    return results;
+  }
+
+  async findAll(projectId?: string): Promise<Document[]> {
+    const where = projectId ? { projectId } : {};
+    return this.documentRepository.find({
+      where,
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  async findByProject(projectId: string): Promise<Document[]> {
+    const docs = await this.findAll(projectId);
+    
+    for (const doc of docs) {
+      if (doc.filePath && !doc.content) {
+        try {
+          doc.content = await this.filesystemService.readFile(doc.filePath);
+        } catch (error) {
+          console.error(`Error reading file ${doc.filePath}:`, error);
+          doc.content = '';
+        }
+      }
+    }
+    
+    return docs;
+  }
+
+  async findOne(id: string): Promise<Document> {
+    const doc = await this.documentRepository.findOne({ where: { id } });
+    if (!doc) {
+      throw new NotFoundException(`Document with ID ${id} not found`);
+    }
+    
+    if (doc.filePath && !doc.content) {
+      doc.content = await this.filesystemService.readFile(doc.filePath);
+    }
+    
+    return doc;
+  }
+
+  async findByPath(projectId: string, path: string): Promise<Document | null> {
+    const doc = await this.documentRepository.findOne({ where: { projectId, path } });
+    
+    if (doc && doc.filePath && !doc.content) {
+      doc.content = await this.filesystemService.readFile(doc.filePath);
+    }
+    
+    return doc;
+  }
+
+  async update(id: string, updateData: Partial<Document>): Promise<Document> {
+    const doc = await this.findOne(id);
+    
+    if (updateData.content) {
+      if (doc.filePath) {
+        await this.filesystemService.deleteFile(doc.filePath);
+      }
+      const fileData = await this.filesystemService.saveFile(
+        doc.projectId,
+        updateData.content,
+        doc.path
+      );
+      updateData.filePath = fileData.filePath;
+      updateData.hash = fileData.hash;
+      updateData.fileSize = fileData.fileSize;
+    }
+    
+    await this.documentRepository.update(id, updateData);
+    return this.findOne(id);
+  }
+
+  async remove(id: string): Promise<void> {
+    const doc = await this.documentRepository.findOne({ where: { id } });
+    if (!doc) {
+      throw new NotFoundException(`Document with ID ${id} not found`);
+    }
+    
+    if (doc.filePath) {
+      await this.filesystemService.deleteFile(doc.filePath);
+    }
+    
+    await this.documentRepository.delete(id);
+  }
+
+  async exportDocument(id: string): Promise<{ document: Document; content: string }> {
+    const doc = await this.findOne(id);
+    return {
+      document: doc,
+      content: doc.content || ''
+    };
+  }
+}

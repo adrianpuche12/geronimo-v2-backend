@@ -1,0 +1,194 @@
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Res, HttpStatus, HttpException, Headers } from '@nestjs/common';
+import type { Response } from 'express';
+import { DocsService } from './docs.service';
+import { SearchService } from './search.service';
+import * as jwt from 'jsonwebtoken';
+
+@Controller('api/docs')
+export class DocsController {
+  constructor(
+    private readonly docsService: DocsService,
+    private readonly searchService: SearchService,
+  ) {}
+
+  private extractIsAdmin(authorization?: string): boolean {
+    if (!authorization || !authorization.startsWith('Bearer ')) {
+      return false;
+    }
+
+    try {
+      const token = authorization.substring(7);
+      const decoded: any = jwt.decode(token);
+
+      if (decoded) {
+        const realmRoles = decoded.realm_access?.roles || [];
+        return realmRoles.includes('admin');
+      }
+    } catch (error) {
+      console.error('[DocsController] Error decoding JWT:', error);
+    }
+
+    return false;
+  }
+
+  @Post()
+  async create(@Body() createDocDto: {
+    projectId: string;
+    path: string;
+    title?: string;
+    content?: string;
+    metadata?: Record<string, any>;
+    author?: string;
+  }) {
+    try {
+      return await this.docsService.create(createDocDto);
+    } catch (error) {
+      if (error.status === HttpStatus.CONFLICT) {
+        throw new HttpException({
+          statusCode: HttpStatus.CONFLICT,
+          message: error.message,
+          error: 'Duplicate Document',
+          details: error.response,
+        }, HttpStatus.CONFLICT);
+      }
+      throw error;
+    }
+  }
+
+  @Post('sync')
+  sync(@Body() syncDto: {
+    projectId: string;
+    documents: Array<{ path: string; content: string; title?: string }>;
+  }) {
+    return this.docsService.sync(syncDto.projectId, syncDto.documents);
+  }
+
+  @Get('search')
+  search(
+    @Query('q') query: string,
+    @Query('projectId') projectId?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('fileType') fileType?: string,
+  ) {
+    return this.searchService.search({
+      query: query || '',
+      projectId,
+      dateFrom,
+      dateTo,
+      fileType,
+    });
+  }
+
+  @Get()
+  findAll() {
+    return this.docsService.findAll();
+  }
+
+  @Get('project/:projectId')
+  findByProject(@Param('projectId') projectId: string) {
+    return this.docsService.findByProject(projectId);
+  }
+
+  @Get(':id/export')
+  async exportDocument(
+    @Param('id') id: string,
+    @Query('format') format: string = 'txt',
+    @Res() res: Response,
+    @Headers('authorization') authorization?: string,
+  ) {
+    const isAdmin = this.extractIsAdmin(authorization);
+    const { document, content } = await this.docsService.exportDocument(id);
+
+    const finalContent = isAdmin ? content : this.docsService.getCensoredContent(document, isAdmin);
+
+    let contentType = 'text/plain';
+    let extension = 'txt';
+    let fileContent = finalContent;
+
+    switch (format.toLowerCase()) {
+      case 'md':
+        contentType = 'text/markdown';
+        extension = 'md';
+        break;
+      case 'json':
+        contentType = 'application/json';
+        extension = 'json';
+        fileContent = JSON.stringify({
+          id: document.id,
+          path: document.path,
+          title: document.title,
+          content: finalContent,
+          metadata: document.metadata,
+          createdAt: document.createdAt,
+          updatedAt: document.updatedAt,
+        }, null, 2);
+        break;
+      case 'html':
+        contentType = 'text/html';
+        extension = 'html';
+        fileContent = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>${document.title || document.path}</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+    pre { background: #f4f4f4; padding: 10px; border-radius: 5px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>${document.title || document.path}</h1>
+  <p><strong>Path:</strong> ${document.path}</p>
+  <p><strong>Created:</strong> ${document.createdAt}</p>
+  <hr>
+  <pre>${finalContent}</pre>
+</body>
+</html>`;
+        break;
+      default:
+        contentType = 'text/plain';
+        extension = 'txt';
+    }
+
+    const filename = `${document.title || 'document'}.${extension}`.replace(/[^a-z0-9.-]/gi, '_');
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(fileContent);
+  }
+
+  @Get(':id')
+  async findOne(
+    @Param('id') id: string,
+    @Headers('authorization') authorization?: string,
+  ) {
+    const isAdmin = this.extractIsAdmin(authorization);
+    const document = await this.docsService.findOne(id);
+
+    console.log(`[DocsController] Getting document ${id}, isAdmin: ${isAdmin}, hasSecrets: ${document.metadata?.hasSecrets}`);
+
+    if (!isAdmin && document.content) {
+    console.log();
+      document.content = this.docsService.getCensoredContent(document, isAdmin);
+    }
+
+    return document;
+  }
+
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() updateDocDto: {
+    path?: string;
+    title?: string;
+    content?: string;
+    metadata?: Record<string, any>;
+    author?: string;
+  }) {
+    return this.docsService.update(id, updateDocDto);
+  }
+
+  @Delete(':id')
+  remove(@Param('id') id: string) {
+    return this.docsService.remove(id);
+  }
+}
