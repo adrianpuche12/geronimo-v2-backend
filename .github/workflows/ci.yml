@@ -61,46 +61,7 @@ jobs:
           retention-days: 7
 
   # ============================================
-  # JOB 2: DEPLOY TO DEV
-  # ============================================
-  deploy-dev:
-    name: Deploy to Development
-    needs: build-and-test
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Deploy to Dev Server
-        uses: appleboy/ssh-action@v1.0.0
-        with:
-          host: ${{ secrets.DEV_SERVER_HOST }}
-          username: ${{ secrets.DEV_SERVER_USER }}
-          key: ${{ secrets.DEV_SERVER_SSH_KEY }}
-          port: 22
-          script: |
-            cd /opt/geronimo-v2/backend
-            git pull origin develop
-            npm install
-            npm run build
-            pm2 restart geronimo-v2-backend || pm2 start dist/server.js --name geronimo-v2-backend
-            pm2 save
-      
-      - name: Verify deployment
-        uses: appleboy/ssh-action@v1.0.0
-        with:
-          host: ${{ secrets.DEV_SERVER_HOST }}
-          username: ${{ secrets.DEV_SERVER_USER }}
-          key: ${{ secrets.DEV_SERVER_SSH_KEY }}
-          port: 22
-          script: |
-            pm2 status geronimo-v2-backend
-            curl -f http://localhost:3005/health || echo "Health check endpoint not ready yet"
-
-  # ============================================
-  # JOB 3: LINT & CODE QUALITY
+  # JOB 2: LINT & CODE QUALITY
   # ============================================
   code-quality:
     name: Code Quality
@@ -122,3 +83,15 @@ jobs:
       - name: Run linter
         run: npm run lint --if-present
         continue-on-error: true
+
+  # ============================================
+  # DEPLOY (MANUAL)
+  # ============================================
+  # El deploy automático está deshabilitado temporalmente
+  # Para hacer deploy manualmente:
+  #   ssh root@62.171.160.238
+  #   cd /opt/geronimo-v2/backend
+  #   git pull origin develop
+  #   npm install
+  #   npm run build
+  #   pm2 restart geronimo-v2-backend || pm2 start dist/server.js --name geronimo-v2-backend
