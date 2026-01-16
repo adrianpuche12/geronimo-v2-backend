@@ -1,0 +1,130 @@
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { BullModule } from '@nestjs/bull';
+
+// Middleware
+import { TenantMiddleware } from './api/middleware/tenant.middleware';
+
+// Controllers
+import { ProjectsController } from './api/controllers/projects.controller';
+import { DocsController } from './api/controllers/docs.controller';
+
+// Modules
+import { QueryModule } from './query/query.module';
+import { AiModule } from './ai/ai.module';
+import { DocsModule } from './docs/docs.module';
+import { ProjectsModule } from './projects/projects.module';
+import { SecurityModule } from './security/security.module';
+import { ExportModule } from './export/export.module';
+import { IntegrationsModule } from './integrations/integrations.module';
+
+// Use Cases
+import { CreateProjectUseCase } from './application/use-cases/create-project.use-case';
+import { ListProjectsUseCase } from './application/use-cases/list-projects.use-case';
+import { GetProjectUseCase } from './application/use-cases/get-project.use-case';
+import { CreateDocumentUseCase } from './application/use-cases/create-document.use-case';
+
+// Repositories
+import { ProjectRepository } from './domain/repositories/project.repository';
+import { DocumentRepository } from './domain/repositories/document.repository';
+
+// Infrastructure
+import { TenantContext } from './infrastructure/database/tenant-context';
+
+// Entities
+import { Document } from './entities/document.entity';
+import { Project } from './entities/project.entity';
+import { User } from './entities/user.entity';
+
+// CAPA 3 Entities
+import { IntegrationCatalog } from './integrations/domain/entities/integration-catalog.entity';
+import { ActiveIntegration } from './integrations/domain/entities/active-integration.entity';
+import { IntegrationSyncLog } from './integrations/domain/entities/integration-sync-log.entity';
+import { IntegrationItem } from './integrations/domain/entities/integration-item.entity';
+
+@Module({
+  imports: [
+    // Configuration
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: '.env',
+    }),
+
+    // TypeORM Configuration
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        type: 'postgres',
+        host: configService.get('DB_HOST'),
+        port: parseInt(configService.get('DB_PORT') || '5432'),
+        username: configService.get('DB_USERNAME'),
+        password: configService.get('DB_PASSWORD'),
+        database: configService.get('DB_NAME'),
+        schema: configService.get('DB_DEFAULT_SCHEMA') || 'public',
+        ssl: configService.get('DB_SSL') === 'true' ? { rejectUnauthorized: false } : false,
+        entities: [
+          Document,
+          Project,
+          User,
+          IntegrationCatalog,
+          ActiveIntegration,
+          IntegrationSyncLog,
+          IntegrationItem,
+        ],
+        synchronize: false,
+        logging: configService.get('NODE_ENV') === 'development',
+      }),
+    }),
+
+    // Bull Queue Configuration (CAPA 3)
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        redis: {
+          host: configService.get('BULL_REDIS_HOST') || '127.0.0.1',
+          port: parseInt(configService.get('BULL_REDIS_PORT') || '6379'),
+          password: configService.get('BULL_REDIS_PASSWORD'),
+          db: parseInt(configService.get('BULL_REDIS_DB') || '1'),
+        },
+        defaultJobOptions: {
+          removeOnComplete: 100,
+          removeOnFail: 500,
+        },
+      }),
+    }),
+
+    // Feature Modules
+    AiModule,
+    DocsModule,
+    ProjectsModule,
+    SecurityModule,
+    ExportModule,
+    QueryModule,
+    IntegrationsModule,
+  ],
+  controllers: [
+    ProjectsController,
+    DocsController,
+  ],
+  providers: [
+    TenantContext,
+    ProjectRepository,
+    DocumentRepository,
+    CreateProjectUseCase,
+    ListProjectsUseCase,
+    GetProjectUseCase,
+    CreateDocumentUseCase,
+  ],
+})
+  exports: [TenantContext],
+})
+/; s/})
+export class AppModule/export class AppModule/
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(TenantMiddleware).forRoutes('*');
+  }
+}

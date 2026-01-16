@@ -1,0 +1,185 @@
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Param,
+  Body,
+  Query,
+  Req,
+} from '@nestjs/common';
+import { ListIntegrationsUseCase } from '../../application/use-cases/list-integrations.use-case';
+import { ActivateIntegrationUseCase } from '../../application/use-cases/activate-integration.use-case';
+import { SyncIntegrationUseCase } from '../../application/use-cases/sync-integration.use-case';
+import { DeactivateIntegrationUseCase } from '../../application/use-cases/deactivate-integration.use-case';
+import { ActivateIntegrationDto } from '../../application/dto/activate-integration.dto';
+import { UpdateIntegrationConfigDto } from '../../application/dto/update-integration-config.dto';
+import { TenantContext } from '../../../infrastructure/database/tenant-context';
+
+/**
+ * Controller para CRUD de integraciones
+ *
+ * Todos los endpoints requieren autenticación (TenantMiddleware)
+ */
+@Controller('api/integrations')
+export class IntegrationsController {
+  constructor(
+    private listIntegrationsUseCase: ListIntegrationsUseCase,
+    private activateIntegrationUseCase: ActivateIntegrationUseCase,
+    private syncIntegrationUseCase: SyncIntegrationUseCase,
+    private deactivateIntegrationUseCase: DeactivateIntegrationUseCase,
+    private tenantContext: TenantContext,
+  ) {}
+
+  /**
+   * Lista todas las integraciones con su estado
+   *
+   * GET /api/integrations
+   */
+  @Get()
+  async listIntegrations() {
+    const tenant = this.tenantContext.get();
+    return this.listIntegrationsUseCase.execute(tenant.schemaName);
+  }
+
+  /**
+   * Activa una integración (requiere OAuth previo)
+   *
+   * POST /api/integrations/activate
+   * Body: { integrationId: 'int-001', metadata: { repos: [...] } }
+   */
+  @Post('activate')
+  async activateIntegration(@Body() dto: ActivateIntegrationDto) {
+    const tenant = this.tenantContext.get();
+
+    await this.activateIntegrationUseCase.execute(
+      tenant.schemaName,
+      dto.integrationId,
+      dto.metadata,
+    );
+
+    return { success: true, message: 'Integration activated' };
+  }
+
+  /**
+   * Actualiza configuración de integración
+   *
+   * PATCH /api/integrations/:id
+   * Body: { enabled: true, metadata: { ... } }
+   */
+  @Patch(':id')
+  async updateIntegration(
+    @Param('id') id: string,
+    @Body() dto: UpdateIntegrationConfigDto,
+  ) {
+    const tenant = this.tenantContext.get();
+
+    if (dto.enabled === false) {
+      await this.deactivateIntegrationUseCase.execute(tenant.schemaName, id);
+    } else if (dto.metadata) {
+      // Si se envía metadata, se asume que se quiere activar y actualizar
+      await this.activateIntegrationUseCase.execute(
+        tenant.schemaName,
+        id,
+        dto.metadata,
+      );
+    }
+
+    return { success: true };
+  }
+
+  /**
+   * Trigger manual de sincronización
+   *
+   * POST /api/integrations/:id/sync
+   */
+  @Post(':id/sync')
+  async triggerSync(@Param('id') id: string) {
+    const tenant = this.tenantContext.get();
+
+    const { jobId } = await this.syncIntegrationUseCase.execute(
+      tenant.schemaName,
+      id,
+      tenant.tenantId,
+    );
+
+    return { success: true, jobId, message: 'Sync job queued' };
+  }
+
+  /**
+   * Desactiva una integración
+   *
+   * DELETE /api/integrations/:id
+   */
+  @Delete(':id')
+  async deactivateIntegration(@Param('id') id: string) {
+    const tenant = this.tenantContext.get();
+
+    await this.deactivateIntegrationUseCase.execute(tenant.schemaName, id);
+
+    return { success: true, message: 'Integration deactivated' };
+  }
+
+  /**
+   * Obtiene estadísticas de una integración
+   *
+   * GET /api/integrations/:id/stats
+   */
+  @Get(':id/stats')
+  async getIntegrationStats(@Param('id') id: string) {
+    const tenant = this.tenantContext.get();
+
+    // TODO: Implementar stats use case
+    return {
+      integrationId: id,
+      totalItems: 0,
+      lastSync: null,
+      syncStatus: 'pending',
+      message: 'Stats endpoint not yet implemented',
+    };
+  }
+
+  /**
+   * Lista logs de sincronización
+   *
+   * GET /api/integrations/:id/logs?limit=10
+   */
+  @Get(':id/logs')
+  async getSyncLogs(
+    @Param('id') id: string,
+    @Query('limit') limit: string,
+  ) {
+    const tenant = this.tenantContext.get();
+
+    // TODO: Implementar logs use case
+    return {
+      logs: [],
+      total: 0,
+      message: 'Logs endpoint not yet implemented',
+    };
+  }
+
+  /**
+   * Lista items sincronizados
+   *
+   * GET /api/integrations/:id/items?limit=100&offset=0
+   */
+  @Get(':id/items')
+  async getIntegrationItems(
+    @Param('id') id: string,
+    @Query('limit') limit: string,
+    @Query('offset') offset: string,
+  ) {
+    const tenant = this.tenantContext.get();
+
+    // TODO: Implementar items use case
+    return {
+      items: [],
+      total: 0,
+      limit: parseInt(limit) || 100,
+      offset: parseInt(offset) || 0,
+      message: 'Items endpoint not yet implemented',
+    };
+  }
+}

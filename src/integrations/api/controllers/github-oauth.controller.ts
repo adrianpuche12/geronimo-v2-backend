@@ -1,0 +1,167 @@
+import { Controller, Get, Query, Req, Res, UseGuards, Logger } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+import { Request, Response } from 'express';
+import { OAuthService } from '../../infrastructure/services/oauth.service';
+import { ActiveIntegrationRepository } from '../../domain/repositories/active-integration.repository';
+import { IntegrationCatalogRepository } from '../../domain/repositories/integration-catalog.repository';
+
+/**
+ * GitHub OAuth Controller
+ * 
+ * Endpoints:
+ * - GET /api/integrations/github/auth - Iniciar OAuth flow
+ * - GET /api/integrations/github/callback - Callback de GitHub
+ */
+@Controller('api/integrations/github')
+export class GitHubOAuthController {
+  private readonly logger = new Logger(GitHubOAuthController.name);
+
+  constructor(
+    private oauthService: OAuthService,
+    private activeIntegrationRepo: ActiveIntegrationRepository,
+    private catalogRepo: IntegrationCatalogRepository,
+  ) {}
+
+  /**
+   * Iniciar OAuth flow con GitHub
+   * 
+   * @example GET /api/integrations/github/auth?tenantId=default_001
+   */
+  @Get('auth')
+  @UseGuards(AuthGuard('github'))
+  async initiateAuth(
+    @Query('tenantId') tenantId: string,
+    @Req() req: Request,
+  ) {
+    // Este método nunca se ejecuta porque AuthGuard redirige a GitHub
+    // Pero necesitamos definirlo para que NestJS registre la ruta
+    
+    // El state se genera automáticamente por Passport
+    // En una implementación más avanzada, podríamos customizar el state aquí
+  }
+
+  /**
+   * Callback de GitHub OAuth
+   * 
+   * @example GET /api/integrations/github/callback?code=xxx&state=yyy
+   */
+  @Get('callback')
+  @UseGuards(AuthGuard('github'))
+  async handleCallback(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query('state') state?: string,
+  ) {
+    try {
+      // Passport ya intercambió el code por access_token
+      // Los datos están en req.user (gracias a GitHubOAuthStrategy.validate())
+      const user = req.user as any;
+
+      if (!user || !user.accessToken) {
+        throw new Error('No access token received from GitHub');
+      }
+
+      this.logger.log(`✅ GitHub OAuth successful for user: ${user.profile.username}`);
+
+      // Decodificar state para obtener tenantId e integrationId
+      let tenantId: string;
+      let tenantSchema: string;
+
+      if (state) {
+        try {
+          const stateData = this.oauthService.validateState(state);
+          tenantId = stateData.tenantId;
+          tenantSchema = `tenant_${tenantId}`;
+        } catch (error) {
+          this.logger.warn(`Failed to decode state: ${error.message}`);
+          // Fallback: usar tenantId del query param o default
+          tenantId = (req.query.tenantId as string) || 'default_001';
+          tenantSchema = `tenant_${tenantId}`;
+        }
+      } else {
+        // No state provided, usar default tenant
+        tenantId = 'default_001';
+        tenantSchema = 'tenant_default_001';
+      }
+
+      this.logger.log(`   Tenant: ${tenantId} (schema: ${tenantSchema})`);
+
+      // Verificar que la integración GitHub existe en el catálogo
+      const catalogIntegration = await this.catalogRepo.findById('int-001');
+      
+      if (!catalogIntegration) {
+        throw new Error('GitHub integration not found in catalog');
+      }
+
+      // Buscar si ya existe una integración activa para este tenant
+      const existingIntegration = await this.activeIntegrationRepo.findByTenantAndIntegrationId(
+        tenantSchema,
+        'int-001',
+      );
+
+      // Encriptar tokens
+      const { encrypted, iv } = this.oauthService.encryptTokens({
+        accessToken: user.accessToken,
+        refreshToken: user.refreshToken,
+        // GitHub tokens no expiran (o expiran en 1 año), pero guardamos fecha de creación
+        expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+      });
+
+      if (existingIntegration) {
+        // Actualizar tokens de integración existente
+        this.logger.log(`   Updating existing integration: ${existingIntegration.id}`);
+        
+        existingIntegration.encryptedConfig = encrypted;
+        existingIntegration.encryptionIv = iv;
+        existingIntegration.enabled = true;
+        existingIntegration.syncStatus = 'pending';
+        existingIntegration.metadata = {
+          ...existingIntegration.metadata,
+          githubUsername: user.profile.username,
+          githubUserId: user.profile.id,
+          lastOAuthUpdate: new Date(),
+        };
+
+        await this.activeIntegrationRepo.save(existingIntegration);
+      } else {
+        // Crear nueva integración activa
+        this.logger.log('   Creating new active integration');
+
+        const newIntegration = this.activeIntegrationRepo.create({
+          integrationId: 'int-001',
+          enabled: true,
+          encryptedConfig: encrypted,
+          encryptionIv: iv,
+          syncStatus: 'pending',
+          metadata: {
+            githubUsername: user.profile.username,
+            githubUserId: user.profile.id,
+            repos: [],  // El usuario configurará los repos después
+          },
+        });
+
+        await this.activeIntegrationRepo.query(`SET search_path TO ${tenantSchema}`);
+        await this.activeIntegrationRepo.save(newIntegration);
+      }
+
+      // Redirigir al frontend con éxito
+      //       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      //       const redirectUrl = `${frontendUrl}/integrations?status=success&provider=github&username=${user.profile.username}`;
+      // 
+      //       this.logger.log(`   Redirecting to: ${redirectUrl}`);
+      // 
+      //       return res.redirect(redirectUrl);
+      return res.status(200).json({ success: true, message: "GitHub conectado exitosamente", username: user.profile.username, tenantId: tenantId });
+
+    } catch (error) {
+      this.logger.error(`❌ GitHub OAuth callback error: ${error.message}`, error.stack);
+
+      // Redirigir al frontend con error
+      //       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      //       const redirectUrl = `${frontendUrl}/integrations?status=error&provider=github&message=${encodeURIComponent(error.message)}`;
+      // 
+      return res.status(500).json({ success: false, message: error.message, provider: "github" });
+      //       return res.redirect(redirectUrl);
+    }
+  }
+}

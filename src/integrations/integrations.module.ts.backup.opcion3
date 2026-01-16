@@ -1,0 +1,95 @@
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { PassportModule } from '@nestjs/passport';
+import { BullModule } from '@nestjs/bull';
+
+import { IntegrationCatalog } from './domain/entities/integration-catalog.entity';
+import { ActiveIntegration } from './domain/entities/active-integration.entity';
+import { IntegrationSyncLog } from './domain/entities/integration-sync-log.entity';
+import { IntegrationItem } from './domain/entities/integration-item.entity';
+
+import { IntegrationCatalogRepository } from './domain/repositories/integration-catalog.repository';
+import { ActiveIntegrationRepository } from './domain/repositories/active-integration.repository';
+import { IntegrationSyncLogRepository } from './domain/repositories/integration-sync-log.repository';
+import { IntegrationItemRepository } from './domain/repositories/integration-item.repository';
+
+import { EncryptionService } from './infrastructure/services/encryption.service';
+import { OAuthService } from './infrastructure/services/oauth.service';
+import { IntegrationFactory } from './infrastructure/factories/integration.factory';
+
+import { GitHubOAuthStrategy } from './infrastructure/providers/github/github-oauth.strategy';
+import { GitHubOAuthController } from './api/controllers/github-oauth.controller';
+import { GitHubProvider } from './infrastructure/providers/github/github.provider';
+import { GitHubSyncProcessor } from './queue/processors/github-sync.processor';
+
+import { GoogleOAuthStrategy } from './infrastructure/providers/gmail/google-oauth.strategy';
+import { GoogleOAuthController } from './api/controllers/google-oauth.controller';
+import { GmailProvider } from './infrastructure/providers/gmail/gmail.provider';
+
+import { GoogleDriveProvider } from './infrastructure/providers/google-drive/google-drive.provider';
+import { DriveSyncProcessor } from './queue/processors/drive-sync.processor';
+
+// FASE 5: Application Layer
+import { ListIntegrationsUseCase } from './application/use-cases/list-integrations.use-case';
+import { ActivateIntegrationUseCase } from './application/use-cases/activate-integration.use-case';
+import { SyncIntegrationUseCase } from './application/use-cases/sync-integration.use-case';
+import { DeactivateIntegrationUseCase } from './application/use-cases/deactivate-integration.use-case';
+import { GetIntegrationStatsUseCase } from './application/use-cases/get-integration-stats.use-case';
+import { GetSyncLogsUseCase } from './application/use-cases/get-sync-logs.use-case';
+import { GetIntegrationItemsUseCase } from './application/use-cases/get-integration-items.use-case';
+import { SyncSchedulerService } from './infrastructure/services/sync-scheduler.service';
+import { IntegrationsController } from './api/controllers/integrations.controller';
+
+@Module({
+  imports: [
+    ConfigModule,
+    PassportModule.register({ defaultStrategy: 'github' }),
+    TypeOrmModule.forFeature([
+      IntegrationCatalog,
+      ActiveIntegration,
+      IntegrationSyncLog,
+      IntegrationItem,
+    ]),
+    BullModule.registerQueue({ name: 'integrations-sync' }),
+  ],
+  controllers: [
+    GitHubOAuthController,
+    GoogleOAuthController,
+    IntegrationsController,  // FASE 5
+  ],
+  providers: [
+    IntegrationCatalogRepository,
+    ActiveIntegrationRepository,
+    IntegrationSyncLogRepository,
+    IntegrationItemRepository,
+    EncryptionService,
+    OAuthService,
+    IntegrationFactory,
+    GitHubOAuthStrategy,
+    GitHubProvider,
+    GitHubSyncProcessor,
+    GoogleOAuthStrategy,
+    GmailProvider,
+    GoogleDriveProvider,
+    DriveSyncProcessor,
+    // FASE 5: Use Cases
+    ListIntegrationsUseCase,
+    ActivateIntegrationUseCase,
+    SyncIntegrationUseCase,
+    DeactivateIntegrationUseCase,
+    GetIntegrationStatsUseCase,
+    GetSyncLogsUseCase,
+    GetIntegrationItemsUseCase,
+    SyncSchedulerService,
+  ],
+  exports: [
+    IntegrationCatalogRepository,
+    ActiveIntegrationRepository,
+    IntegrationFactory,
+    GitHubProvider,
+    GmailProvider,
+    GoogleDriveProvider,
+  ],
+})
+export class IntegrationsModule {}
