@@ -4,9 +4,14 @@ import { OpenAIProvider } from './providers/openai.provider';
 import { GroqProvider } from './providers/groq.provider';
 import { OllamaProvider } from './providers/ollama.provider';
 import { AIFactory } from './ai.factory';
+import { ChromaDBModule } from './vectorstore/chromadb.module';
+import { ChromaDBService } from './vectorstore/chromadb.service';
 
 @Module({
-  imports: [ConfigModule],
+  imports: [
+    ConfigModule,
+    ChromaDBModule,
+  ],
   providers: [
     // AI Providers
     OpenAIProvider,
@@ -22,6 +27,8 @@ import { AIFactory } from './ai.factory';
     OpenAIProvider,
     GroqProvider,
     OllamaProvider,
+    // Export ChromaDB for vector operations
+    ChromaDBModule,
   ],
 })
 export class AiModule {}

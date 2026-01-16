@@ -21,12 +21,16 @@ import { DocumentRepository } from './domain/repositories/document.repository';
 // Infrastructure
 import { TenantContext } from './infrastructure/database/tenant-context';
 
+// AI Module (ChromaDB Vector Store)
+import { AiModule } from './ai/ai.module';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
     }),
+    AiModule,
   ],
   controllers: [
     ProjectsController,
