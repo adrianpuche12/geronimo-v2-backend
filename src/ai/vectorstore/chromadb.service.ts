@@ -245,4 +245,52 @@ export class ChromaDBService implements OnModuleInit {
       return { status: 'unhealthy', url: this.chromaUrl };
     }
   }
+
+  async searchByText(
+    tenantId: string,
+    queryText: string,
+    options: {
+      projectId?: string;
+      nResults?: number;
+      minScore?: number;
+      filter?: Record<string, any>;
+    } = {}
+  ): Promise<SearchResult[]> {
+    const { projectId, nResults = 10, minScore = 0.3, filter } = options;
+    const collection = await this.getOrCreateCollection(tenantId, projectId);
+
+    try {
+      const results = await collection.query({
+        queryTexts: [queryText],
+        nResults,
+        where: filter,
+      });
+
+      if (!results.ids || !results.ids[0]) {
+        return [];
+      }
+
+      const searchResults: SearchResult[] = [];
+
+      for (let i = 0; i < results.ids[0].length; i++) {
+        const distance = results.distances?.[0]?.[i] ?? 1;
+        const score = 1 - distance;
+
+        if (score >= minScore) {
+          searchResults.push({
+            id: results.ids[0][i],
+            content: results.documents?.[0]?.[i] || '',
+            score,
+            metadata: results.metadatas?.[0]?.[i] || {},
+          });
+        }
+      }
+
+      this.logger.debug('Busqueda por texto retorno ' + searchResults.length + ' resultados');
+      return searchResults;
+    } catch (error) {
+      this.logger.error('Error en busqueda por texto: ' + error.message);
+      throw error;
+    }
+  }
 }
