@@ -44,6 +44,7 @@
     "@nestjs/swagger": "^11.2.3",
     "@nestjs/typeorm": "^11.0.0",
     "@types/ioredis": "^4.28.10",
+    "@types/uuid": "^10.0.0",
     "@upstash/redis": "^1.35.7",
     "axios": "^1.6.2",
     "chromadb": "^1.7.3",
@@ -66,6 +67,7 @@
     "rxjs": "^7.8.2",
     "swagger-ui-express": "^5.0.1",
     "typeorm": "^0.3.28",
+    "uuid": "^13.0.0",
     "winston": "^3.11.0"
   },
   "devDependencies": {

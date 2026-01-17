@@ -7,6 +7,7 @@ import { AIFactory } from "./ai.factory";
 import { ChromaDBModule } from "./vectorstore/chromadb.module";
 import { RagModule } from "./rag/rag.module";
 import { ControlModule } from "./control/control.module";
+import { AIController } from "./ai.controller";
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { ControlModule } from "./control/control.module";
     RagModule,
     ControlModule,
   ],
+  controllers: [AIController],
   providers: [
     OpenAIProvider,
     GroqProvider,
